@@ -9409,7 +9409,7 @@ static public class MethodParamExpr implements Expr, MaybePrimitiveExpr{
 
 public static class CaseExpr implements Expr, MaybePrimitiveExpr{
 	public final LocalBindingExpr expr;
-	public final int shift, mask, low, high;
+	public final int low, high;
 	public final Expr defaultExpr;
 	public final SortedMap<Integer,Expr> tests;
 	public final HashMap<Integer,Expr> thens;
@@ -9435,8 +9435,6 @@ public static class CaseExpr implements Expr, MaybePrimitiveExpr{
 	public CaseExpr(int line, int column, LocalBindingExpr expr, int shift, int mask, int low, int high, Expr defaultExpr,
 	        SortedMap<Integer,Expr> tests,HashMap<Integer,Expr> thens, Keyword switchType, Keyword testType, Set<Integer> skipCheck){
 		this.expr = expr;
-		this.shift = shift;
-		this.mask = mask;
 		this.low = low;
 		this.high = high;
 		this.defaultExpr = defaultExpr;
@@ -9542,20 +9540,6 @@ public static class CaseExpr implements Expr, MaybePrimitiveExpr{
 			gen.pop();
 	}
 
-	private boolean isShiftMasked(){
-	    return  mask != 0;
-	}
-
-	private void emitShiftMask(GeneratorAdapter gen){
-	    if (isShiftMasked())
-	        {
-            gen.push(shift);
-            gen.visitInsn(ISHR);
-            gen.push(mask);
-            gen.visitInsn(IAND);
-	        }
-	}
-
     private void emitExprForInts(ObjExpr objx, GeneratorAdapter gen, Type exprType, Label defaultLabel){
         if (exprType == null)
             {
@@ -9571,7 +9555,6 @@ public static class CaseExpr implements Expr, MaybePrimitiveExpr{
             expr.emit(C.EXPRESSION, objx, gen);
             gen.checkCast(NUMBER_TYPE);
             gen.invokeVirtual(NUMBER_TYPE, intValueMethod);
-            emitShiftMask(gen);
             }
         else if (exprType == Type.LONG_TYPE
                 || exprType == Type.INT_TYPE
@@ -9580,7 +9563,6 @@ public static class CaseExpr implements Expr, MaybePrimitiveExpr{
             {
             expr.emitUnboxed(C.EXPRESSION, objx, gen);
             gen.cast(exprType, Type.INT_TYPE);
-            emitShiftMask(gen);
             }
         else
             {
@@ -9608,14 +9590,6 @@ public static class CaseExpr implements Expr, MaybePrimitiveExpr{
                 || exprType == Type.SHORT_TYPE
                 || exprType == Type.BYTE_TYPE)
             {
-            if (isShiftMasked())
-                {
-                ((NumberExpr)test).emitUnboxed(C.EXPRESSION, objx, gen);
-                expr.emitUnboxed(C.EXPRESSION, objx, gen);
-                gen.cast(exprType, Type.LONG_TYPE);
-                gen.ifCmp(Type.LONG_TYPE, GeneratorAdapter.NE, defaultLabel);
-                }
-            // else direct match
             emitExpr(objx, gen, then, emitUnboxed);
             }
         else
@@ -9627,7 +9601,6 @@ public static class CaseExpr implements Expr, MaybePrimitiveExpr{
     private void emitExprForHashes(ObjExpr objx, GeneratorAdapter gen){
         expr.emit(C.EXPRESSION, objx, gen);
         gen.invokeStatic(UTIL_TYPE,hashMethod);
-        emitShiftMask(gen);
     }
 
     private void emitThenForHashes(ObjExpr objx, GeneratorAdapter gen, Expr test, Expr then, Label defaultLabel, boolean emitUnboxed){
@@ -9706,7 +9679,7 @@ public static class CaseExpr implements Expr, MaybePrimitiveExpr{
                     }
 				thens.put(minhash, thenExpr);
 				}
-            
+
             Expr defaultExpr;
             try {
                 Var.pushThreadBindings(
