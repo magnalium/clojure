@@ -6807,6 +6807,22 @@ fails, attempts to require sym's namespace and retries."
 (def ^:private max-mask-bits 13)
 (def ^:private max-switch-table-size (bit-shift-left 1 max-mask-bits))
 
+(def ^:private max-gap-bits 6)
+(def ^:private max-gap-size (bit-shift-left 1 max-gap-bits))
+
+(defn- det-switch-type
+  "Takes a sequence of test constants.
+  Returns a switch-type is either :sparse or :compact."
+  [tests]
+  (loop [prev (first tests) more (next tests)]
+    (cond
+      (nil? (first more))
+        :compact
+      (>= (abs (- (first more) prev)) max-gap-size)
+        :sparse
+      :else
+        (recur (first more) (next more)))))
+
 (defn- maybe-min-hash
   "takes a collection of hashes and returns [shift mask] or nil if none found"
   [hashes]
@@ -6828,27 +6844,13 @@ fails, attempts to require sym's namespace and retries."
               (map test-f tests)
               thens))))
 
-(defn- fits-table?
-  "Returns true if the collection of ints can fit within the
-  max-table-switch-size, false otherwise."
-  [ints]
-  (< (- (apply max (seq ints)) (apply min (seq ints))) max-switch-table-size))
-
 (defn- prep-ints
   "Takes a sequence of int-sized test constants and a corresponding sequence of
-  then expressions. Returns a tuple of [shift mask case-map switch-type] where
+  then expressions. Returns a tuple of [case-map switch-type] where
   case-map is a map of int case values to [test then] tuples, and switch-type
   is either :sparse or :compact."
   [tests thens]
-  (if (fits-table? tests)
-    ; compact case ints, no shift-mask
-    [0 0 (case-map int int tests thens) :compact]
-    (let [[shift mask] (or (maybe-min-hash (map int tests)) [0 0])]
-      (if (zero? mask)
-        ; sparse case ints, no shift-mask
-        [0 0 (case-map int int tests thens) :sparse]
-        ; compact case ints, with shift-mask
-        [shift mask (case-map #(shift-mask shift mask (int %)) int tests thens) :compact]))))
+  [(case-map int int tests thens) (det-switch-type (sort tests))])
 
 (defn- merge-hash-collisions
   "Takes a case expression, default expression, and a sequence of test constants
@@ -6888,7 +6890,7 @@ fails, attempts to require sym's namespace and retries."
 
 (defn- prep-hashes
   "Takes a sequence of test constants and a corresponding sequence of then
-  expressions. Returns a tuple of [shift mask case-map switch-type skip-check]
+  expressions. Returns a tuple of [case-map switch-type skip-check]
   where case-map is a map of int case values to [test then] tuples, switch-type
   is either :sparse or :compact, and skip-check is a set of case ints for which
   post-switch equivalence checking must not be done (occurs with hash
@@ -6897,25 +6899,14 @@ fails, attempts to require sym's namespace and retries."
   (let [hashcode #(clojure.lang.Util/hash %)
         hashes (into1 #{} (map hashcode tests))]
     (if (== (count tests) (count hashes))
-      (if (fits-table? hashes)
-        ; compact case ints, no shift-mask
-        [0 0 (case-map hashcode identity tests thens) :compact]
-        (let [[shift mask] (or (maybe-min-hash hashes) [0 0])]
-          (if (zero? mask)
-            ; sparse case ints, no shift-mask
-            [0 0 (case-map hashcode identity tests thens) :sparse]
-            ; compact case ints, with shift-mask
-            [shift mask (case-map #(shift-mask shift mask (hashcode %)) identity tests thens) :compact])))
-      ; resolve hash collisions and try again
-      (let [[tests thens skip-check] (merge-hash-collisions expr-sym default tests thens)
-            [shift mask case-map switch-type] (prep-hashes expr-sym default tests thens)
-            skip-check (if (zero? mask)
-                         skip-check
-                         (into1 #{} (map #(shift-mask shift mask %) skip-check)))]
-        [shift mask case-map switch-type skip-check]))))
+      [(case-map hashcode identity tests thens) (det-switch-type (sort (map hashcode tests)))]
+        ; resolve hash collisions and try again
+        (let [[tests thens skip-check] (merge-hash-collisions expr-sym default tests thens)
+              [case-map switch-type] (prep-hashes expr-sym default tests thens)
+              skip-check (into1 #{} skip-check)]
+          [case-map switch-type skip-check]))))
 
-
-(defmacro case 
+(defmacro case
   "Takes an expression, and a set of clauses.
 
   Each clause can take the form of either:
@@ -6968,14 +6959,14 @@ fails, attempts to require sym's namespace and retries."
                    :else :hashes)]
         (condp = mode
           :ints
-          (let [[shift mask imap switch-type] (prep-ints tests thens)]
-            `(let [~ge ~e] (case* ~ge ~shift ~mask ~default ~imap ~switch-type :int)))
+          (let [[imap switch-type] (prep-ints tests thens)]
+            `(let [~ge ~e] (case* ~ge ~default ~imap ~switch-type :int)))
           :hashes
-          (let [[shift mask imap switch-type skip-check] (prep-hashes ge default tests thens)]
-            `(let [~ge ~e] (case* ~ge ~shift ~mask ~default ~imap ~switch-type :hash-equiv ~skip-check)))
+          (let [[imap switch-type skip-check] (prep-hashes ge default tests thens)]
+            `(let [~ge ~e] (case* ~ge ~default ~imap ~switch-type :hash-equiv ~skip-check)))
           :identity
-          (let [[shift mask imap switch-type skip-check] (prep-hashes ge default tests thens)]
-            `(let [~ge ~e] (case* ~ge ~shift ~mask ~default ~imap ~switch-type :hash-identity ~skip-check))))))))
+          (let [[imap switch-type skip-check] (prep-hashes ge default tests thens)]
+            `(let [~ge ~e] (case* ~ge ~default ~imap ~switch-type :hash-identity ~skip-check))))))))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; helper files ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
