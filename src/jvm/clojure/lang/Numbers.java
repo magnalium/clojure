@@ -223,17 +223,7 @@ static public double quotient(double n, double d){
 static public double remainder(double n, double d){
 	if(d == 0)
 		throw new ArithmeticException("Divide by zero");
-
-	double q = n / d;
-	if(q <= Long.MAX_VALUE && q >= Long.MIN_VALUE)
-		{
-		return (n - ((long) q) * d);
-		}
-	else
-		{ //bigint quotient
-		Number bq = new BigDecimal(q).toBigInteger();
-		return (n - bq.doubleValue() * d);
-		}
+	return n % d;
 }
 
 static public boolean equiv(Object x, Object y){
